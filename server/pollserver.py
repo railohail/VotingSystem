@@ -3,6 +3,11 @@ from fastapi.middleware.cors import CORSMiddleware
 import json
 from typing import List
 import os
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
@@ -36,29 +41,33 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 def load_poll_data():
+    logger.info(f"Loading poll data from {POLL_FILE}")
     if not os.path.exists(POLL_FILE):
-        # If the file doesn't exist, create it with an empty structure
+        logger.info(f"{POLL_FILE} does not exist, creating new file")
         empty_data = {"subjects": {}}
         save_poll_data(empty_data)
         return empty_data
     
     try:
-        with open(POLL_FILE, "r") as f:
+        with open(POLL_FILE, "r", encoding='utf-8') as f:
             data = json.load(f)
-            # If the file is empty or doesn't have the correct structure, initialize it
+            logger.info(f"Loaded data: {data}")
             if not data or "subjects" not in data:
+                logger.info("Invalid data structure, initializing with empty data")
                 data = {"subjects": {}}
                 save_poll_data(data)
             return data
     except json.JSONDecodeError:
-        # If the file is not valid JSON, initialize it with an empty structure
+        logger.error(f"Invalid JSON in {POLL_FILE}, initializing with empty data")
         empty_data = {"subjects": {}}
         save_poll_data(empty_data)
         return empty_data
 
 def save_poll_data(data):
-    with open(POLL_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+    logger.info(f"Saving poll data to {POLL_FILE}")
+    with open(POLL_FILE, "w", encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    logger.info(f"Data saved: {data}")
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -66,7 +75,7 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             data = await websocket.receive_text()
-            poll_data = load_poll_data()
+            poll_data = load_poll_data()  # Always load fresh data
             action = json.loads(data)
             
             if action["type"] == "vote":
@@ -96,7 +105,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         
                         subject_data["votes"][username] = user_votes
                         save_poll_data(poll_data)
-                        await manager.broadcast(json.dumps(poll_data))
+                        await manager.broadcast(json.dumps(poll_data, ensure_ascii=False))
             
             elif action["type"] == "new_option":
                 subject = action["subject"]
@@ -106,7 +115,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     if new_option not in poll_data["subjects"][subject]["options"]:
                         poll_data["subjects"][subject]["options"][new_option] = 0
                         save_poll_data(poll_data)
-                        await manager.broadcast(json.dumps(poll_data))
+                        await manager.broadcast(json.dumps(poll_data, ensure_ascii=False))
             
             elif action["type"] == "new_subject":
                 subject = action["subject"]
@@ -117,25 +126,25 @@ async def websocket_endpoint(websocket: WebSocket):
                         "votes": {}
                     }
                     save_poll_data(poll_data)
-                    await manager.broadcast(json.dumps(poll_data))
+                    await manager.broadcast(json.dumps(poll_data, ensure_ascii=False))
 
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
 @app.get("/poll_data")
 async def get_poll_data():
-    return load_poll_data()
+    return load_poll_data()  # Always load fresh data
 
 @app.post("/new_subject")
 async def add_new_subject(subject: str):
-    poll_data = load_poll_data()
+    poll_data = load_poll_data()  # Always load fresh data
     if subject not in poll_data["subjects"]:
         poll_data["subjects"][subject] = {
             "options": {},
             "votes": {}
         }
         save_poll_data(poll_data)
-        await manager.broadcast(json.dumps(poll_data))
+        await manager.broadcast(json.dumps(poll_data, ensure_ascii=False))
         return {"message": f"New subject '{subject}' added successfully"}
     else:
         return {"message": f"Subject '{subject}' already exists"}

@@ -59,20 +59,34 @@ watch(
   },
   { immediate: true }
 )
-
-const connectWebSocket = () => {
-  ws = new WebSocket(config.wsUrl)
-
-  ws.onmessage = (event) => {
+const handleWebSocketMessage = (event: MessageEvent) => {
+  try {
     const data = JSON.parse(event.data)
     if (data.subjects) {
+      localStorage.setItem('pollData', JSON.stringify(data)) // Update localStorage
       updateAllSubjects(data)
       updateOptionsForSubject(props.subject, data)
     }
+  } catch (error) {
+    console.error('Error processing WebSocket message:', error)
+  }
+}
+const connectWebSocket = () => {
+  ws = new WebSocket(config.wsUrl)
+
+  ws.onopen = () => {
+    console.log('WebSocket connected')
   }
 
+  ws.onmessage = handleWebSocketMessage
+
   ws.onclose = () => {
+    console.log('WebSocket disconnected. Attempting to reconnect...')
     setTimeout(connectWebSocket, 1000)
+  }
+
+  ws.onerror = (error) => {
+    console.error('WebSocket error:', error)
   }
 }
 
@@ -123,31 +137,36 @@ const getPercentage = (votes: number) => {
 }
 
 const vote = (optionText: string) => {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    console.warn('WebSocket is not open. Unable to send vote.')
+    return
+  }
 
   const subjectVotes = userVotes.value[props.subject] || []
   const voteIndex = subjectVotes.indexOf(optionText)
   if (voteIndex !== -1) {
-    // User is retracting their vote
     subjectVotes.splice(voteIndex, 1)
   } else if (subjectVotes.length < 2) {
-    // User is adding a new vote
     subjectVotes.push(optionText)
   } else {
-    // User has already voted for two options, remove the first vote and add the new one
     subjectVotes.shift()
     subjectVotes.push(optionText)
   }
   userVotes.value[props.subject] = subjectVotes
 
-  ws.send(
-    JSON.stringify({
-      type: 'vote',
-      subject: props.subject,
-      option: optionText,
-      username: authStore.user
-    })
-  )
+  try {
+    ws.send(
+      JSON.stringify({
+        type: 'vote',
+        subject: props.subject,
+        option: optionText,
+        username: authStore.user
+      })
+    )
+  } catch (error) {
+    console.error('Error sending vote:', error)
+    // Optionally, you could add a toast notification here to inform the user
+  }
 }
 
 const addNewOption = () => {
@@ -161,34 +180,49 @@ const addNewOption = () => {
     visible.value = false
     return
   }
-  if (!ws || ws.readyState !== WebSocket.OPEN) return
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    console.warn('WebSocket is not open. Unable to add new option.')
+    return
+  }
 
   if (newOptionText.value.trim()) {
-    ws.send(
-      JSON.stringify({
-        type: 'new_option',
-        subject: props.subject,
-        option: newOptionText.value.trim()
-      })
-    )
-    newOptionText.value = ''
-    visible.value = false
+    try {
+      ws.send(
+        JSON.stringify({
+          type: 'new_option',
+          subject: props.subject,
+          option: newOptionText.value.trim()
+        })
+      )
+      newOptionText.value = ''
+      visible.value = false
+    } catch (error) {
+      console.error('Error adding new option:', error)
+      // Optionally, add a toast notification here
+    }
   }
 }
-
 const addNewSubject = () => {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    console.warn('WebSocket is not open. Unable to add new subject.')
+    return
+  }
 
   if (newSubjectText.value.trim()) {
-    ws.send(
-      JSON.stringify({
-        type: 'new_subject',
-        subject: newSubjectText.value.trim()
-      })
-    )
-    emit('subjectAdded', newSubjectText.value.trim())
-    newSubjectText.value = ''
-    visible.value = false
+    try {
+      ws.send(
+        JSON.stringify({
+          type: 'new_subject',
+          subject: newSubjectText.value.trim()
+        })
+      )
+      emit('subjectAdded', newSubjectText.value.trim())
+      newSubjectText.value = ''
+      visible.value = false
+    } catch (error) {
+      console.error('Error adding new subject:', error)
+      // Optionally, add a toast notification here
+    }
   }
 }
 
@@ -196,8 +230,8 @@ const openDrawerForOption = () => {
   if (!props.subject) {
     toast.add({
       severity: 'warn',
-      summary: 'No Subject Selected',
-      detail: 'Please select a subject before adding an option.',
+      summary: '還未有題目',
+      detail: '請先增加題目',
       life: 3000
     })
     return
@@ -214,7 +248,14 @@ const openDrawerForSubject = () => {
 
 <template>
   <div class="poll-container">
-    <Toast />
+    <Toast
+      position="bottom-right"
+      :pt="{
+        root: {
+          class: 'w-64 text-sm !right-0 !bottom-0'
+        }
+      }"
+    />
     <Drawer v-model:visible="visible" :header="isAddingSubject ? '增加題目' : '增加選項'">
       <div class="p-fluid">
         <div v-if="isAddingSubject" class="p-field">
@@ -240,7 +281,7 @@ const openDrawerForSubject = () => {
         @click="openDrawerForOption"
         class="drawer-button"
       />
-      <h1 class="text-white-500 text-2xl">{{ subject || 'No Subject Selected' }}</h1>
+      <h1 class="text-white-500 text-2xl">{{ subject || '沒有題目' }}</h1>
       <Button
         rounded
         outlined
