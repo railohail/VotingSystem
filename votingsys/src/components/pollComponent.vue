@@ -7,6 +7,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import Toast from 'primevue/toast'
 import { useToast } from 'primevue/usetoast'
+import { config } from '@/config'
 
 const visible = ref(false)
 const newOptionText = ref('')
@@ -33,11 +34,11 @@ const localOptions = ref<Option[]>([])
 const allSubjects = ref<string[]>([])
 let ws: WebSocket | null = null
 
-onMounted(() => {
+onMounted(async () => {
   if (!authStore.isAuthenticated) {
     router.push('/login')
   } else {
-    fetchInitialPollData()
+    await fetchInitialPollData()
     connectWebSocket()
   }
 })
@@ -51,12 +52,16 @@ onUnmounted(() => {
 watch(
   () => props.subject,
   (newSubject) => {
-    updateOptionsForSubject(newSubject)
-  }
+    if (newSubject) {
+      const pollData = JSON.parse(localStorage.getItem('pollData') || '{}')
+      updateOptionsForSubject(newSubject, pollData)
+    }
+  },
+  { immediate: true }
 )
 
 const connectWebSocket = () => {
-  ws = new WebSocket('ws://localhost:8000/ws')
+  ws = new WebSocket(config.wsUrl)
 
   ws.onmessage = (event) => {
     const data = JSON.parse(event.data)
@@ -78,7 +83,7 @@ const updateAllSubjects = (data: any) => {
 
 const updateOptionsForSubject = (subject: string, data?: any) => {
   const pollData = data || JSON.parse(localStorage.getItem('pollData') || '{}')
-  if (authStore.user && pollData.subjects && pollData.subjects[subject]) {
+  if (pollData.subjects && pollData.subjects[subject]) {
     localOptions.value = Object.entries(pollData.subjects[subject].options).map(
       ([text, votes], index) => ({
         id: index + 1,
@@ -86,7 +91,9 @@ const updateOptionsForSubject = (subject: string, data?: any) => {
         votes: votes as number
       })
     )
-    userVotes.value[subject] = pollData.subjects[subject].votes[authStore.user] || []
+    if (authStore.user) {
+      userVotes.value[subject] = pollData.subjects[subject].votes[authStore.user] || []
+    }
   } else {
     localOptions.value = []
     userVotes.value[subject] = []
@@ -95,7 +102,7 @@ const updateOptionsForSubject = (subject: string, data?: any) => {
 
 const fetchInitialPollData = async () => {
   try {
-    const response = await fetch('http://localhost:8000/poll_data')
+    const response = await fetch(`${config.apiUrl}/poll_data`)
     const data = await response.json()
     localStorage.setItem('pollData', JSON.stringify(data))
     updateAllSubjects(data)
